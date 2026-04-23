@@ -16,5 +16,10 @@ typedef enum {
 const char *transform_name(TransformType type);
 const char *transform_slug(TransformType type);
 int apply_transform(const BMPImage *input, BMPImage *output, TransformType type);
+int apply_transform_parallel(const BMPImage *input,
+                             BMPImage *output,
+                             TransformType type,
+                             int blur_kernel_size,
+                             int thread_count);
 
 #endif

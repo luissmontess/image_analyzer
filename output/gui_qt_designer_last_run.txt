@@ -1,0 +1,14 @@
+timestamp=2026-04-23T11:41:21
+threads=6
+blur_kernel_gray=3
+blur_kernel_color=3
+selected_transforms=1,4,0,3,2,5
+exit_code=0
+inputs:
+- /media/psf/MakrebSSD/convertico-coffee-bean-24-bit-bmp.bmp
+- /media/psf/MakrebSSD/1-bmp-sample-2 (1).bmp
+- /media/psf/MakrebSSD/sample_1280×853.bmp
+stdout:
+<empty>
+stderr:
+<empty>

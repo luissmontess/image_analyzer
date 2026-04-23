@@ -15,6 +15,7 @@ typedef struct {
     const char *image_name;
     TransformType transform;
     const BMPImage *input_image;
+    int blur_kernel_size;
     char output_path[PATH_MAX];
     double elapsed_seconds;
     int status;

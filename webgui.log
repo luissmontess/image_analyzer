@@ -1,0 +1,30 @@
+/home/parallels/Documents/act/image_analyzer/gui_web.py:9: DeprecationWarning: 'cgi' is deprecated and slated for removal in Python 3.13
+  import cgi
+127.0.0.1 - - [22/Apr/2026 11:25:58] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [22/Apr/2026 11:26:09] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [22/Apr/2026 11:26:10] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [22/Apr/2026 11:26:21] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [22/Apr/2026 11:28:03] "GET /favicon.ico HTTP/1.1" 404 -
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 51546)
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/socketserver.py", line 318, in _handle_request_noblock
+    self.process_request(request, client_address)
+  File "/usr/lib/python3.12/socketserver.py", line 349, in process_request
+    self.finish_request(request, client_address)
+  File "/usr/lib/python3.12/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "/usr/lib/python3.12/socketserver.py", line 761, in __init__
+    self.handle()
+  File "/usr/lib/python3.12/http/server.py", line 436, in handle
+    self.handle_one_request()
+  File "/usr/lib/python3.12/http/server.py", line 424, in handle_one_request
+    method()
+  File "/home/parallels/Documents/act/image_analyzer/gui_web.py", line 400, in do_GET
+    self._html(404, "Not Found")
+  File "/home/parallels/Documents/act/image_analyzer/gui_web.py", line 394, in _html
+    self.wfile.write(raw)
+  File "/usr/lib/python3.12/socketserver.py", line 840, in write
+    self._sock.sendall(b)
+BrokenPipeError: [Errno 32] Broken pipe
+----------------------------------------
