@@ -47,3 +47,17 @@ int run_tasks(Task *tasks, int task_count, int thread_count) {
 
     return 0;
 }
+
+int run_tasks_distributed(Task *tasks, int task_count, int thread_count, int rank, int world_size) {
+    int i = 0;
+
+    if (tasks == NULL || task_count <= 0 || thread_count <= 0 || rank < 0 || world_size <= 0) {
+        return -1;
+    }
+
+    for (i = rank; i < task_count; i += world_size) {
+        execute_task(&tasks[i], thread_count);
+    }
+
+    return 0;
+}

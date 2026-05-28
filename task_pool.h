@@ -22,5 +22,6 @@ typedef struct {
 } Task;
 
 int run_tasks(Task *tasks, int task_count, int thread_count);
+int run_tasks_distributed(Task *tasks, int task_count, int thread_count, int rank, int world_size);
 
 #endif

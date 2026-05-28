@@ -1,13 +1,20 @@
-timestamp=2026-04-29T11:46:34
+timestamp=2026-04-30T21:58:47
 threads=6
-blur_kernel_gray=3
-blur_kernel_color=3
+blur_kernel_gray=21
+blur_kernel_color=21
 selected_transforms=1,4,0,3,2,5
 exit_code=0
 inputs:
-- /home/parallels/Documents/act/image_analyzer/input/sample_1280×853.bmp
-- /home/parallels/Documents/act/image_analyzer/input/convertico-coffee-bean-24-bit-bmp.bmp
-- /home/parallels/Documents/act/image_analyzer/input/blue-bmp-32-bit.bmp
+- /media/psf/MakrebSSD/1-bmp-sample-2 (1).bmp
+- /media/psf/MakrebSSD/barbara_gray.bmp
+- /media/psf/MakrebSSD/blue-bmp-32-bit.bmp
+- /media/psf/MakrebSSD/bmp_24.bmp
+- /media/psf/MakrebSSD/convertico-coffee-bean-24-bit-bmp.bmp
+- /media/psf/MakrebSSD/dots.bmp
+- /media/psf/MakrebSSD/greenland_grid_velo.bmp
+- /media/psf/MakrebSSD/lena.bmp
+- /media/psf/MakrebSSD/sample_1280×853.bmp
+- /media/psf/MakrebSSD/snail.bmp
 stdout:
 <empty>
 stderr:
