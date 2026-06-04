@@ -2,16 +2,26 @@
 
 #include "timing.h"
 
+#include <stdio.h>
 #include <stddef.h>
+#include <string.h>
 
 static void execute_task(Task *task, int thread_count) {
     BMPImage output;
+    BMPStatus bmp_status = BMP_STATUS_OK;
     double start_time = now_seconds();
 
     task->status = -1;
     task->elapsed_seconds = 0.0;
+    task->error_message[0] = '\0';
 
-    if (bmp_create_like(task->input_image, &output) != 0) {
+    if (task->input_image == NULL || task->input_image->channels != 3) {
+        snprintf(task->error_message, sizeof(task->error_message), "invalid_channels");
+        return;
+    }
+
+    if (bmp_create_like_with_error(task->input_image, &output, &bmp_status) != 0) {
+        snprintf(task->error_message, sizeof(task->error_message), "%s", bmp_status_message(bmp_status));
         return;
     }
 
@@ -21,11 +31,13 @@ static void execute_task(Task *task, int thread_count) {
                                  task->blur_kernel_size,
                                  thread_count) != 0) {
         bmp_free(&output);
+        snprintf(task->error_message, sizeof(task->error_message), "filter_failed");
         return;
     }
 
-    if (bmp_save(task->output_path, &output) != 0) {
+    if (bmp_save_with_error(task->output_path, &output, &bmp_status) != 0) {
         bmp_free(&output);
+        snprintf(task->error_message, sizeof(task->error_message), "%s", bmp_status_message(bmp_status));
         return;
     }
 

@@ -18,11 +18,15 @@ $(TARGET): $(OBJECTS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build-arm: clean
-	$(MAKE) TARGET=$(TARGET_ARM)
+build-arm: $(TARGET_ARM)
 
-build-x86: clean
-	$(MAKE) TARGET=$(TARGET_X86)
+build-x86: $(TARGET_X86)
+
+$(TARGET_ARM): $(OBJECTS)
+	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
+
+$(TARGET_X86): $(OBJECTS)
+	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
 
 clean:
 	rm -f $(OBJECTS) $(TARGET) $(TARGET_ARM) $(TARGET_X86)

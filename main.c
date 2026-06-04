@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef PATH_MAX
@@ -37,9 +38,9 @@ typedef struct {
 
 static void print_usage(const char *program_name) {
     fprintf(stderr,
-            "Uso: %s [--threads N] [--input-dir dir] [--output-dir dir] [--logs-dir dir]\\n"
-            "          [--transforms all|0,1,2,...]\\n"
-            "          [--blur-kernel-gray N] [--blur-kernel-color N]\\n",
+            "Uso: %s [--threads N] [--input-dir dir] [--output-dir dir] [--logs-dir dir]\n"
+            "          [--transforms all|0,1,2,...]\n"
+            "          [--blur-kernel-gray N] [--blur-kernel-color N]\n",
             program_name);
 }
 
@@ -258,6 +259,202 @@ fail:
     return -1;
 }
 
+static void format_timestamp(char *buffer, size_t buffer_size) {
+    time_t now = time(NULL);
+    struct tm local_tm;
+
+    if (buffer == NULL || buffer_size == 0) {
+        return;
+    }
+
+    if (now == (time_t)-1 || localtime_r(&now, &local_tm) == NULL) {
+        buffer[0] = '\0';
+        return;
+    }
+
+    if (strftime(buffer, buffer_size, "%Y-%m-%dT%H:%M:%S", &local_tm) == 0) {
+        buffer[0] = '\0';
+    }
+}
+
+static void csv_write_field(FILE *file, const char *text) {
+    const unsigned char *cursor = (const unsigned char *)text;
+    int needs_quotes = 0;
+
+    if (file == NULL) {
+        return;
+    }
+
+    if (text == NULL) {
+        return;
+    }
+
+    while (*cursor != '\0') {
+        if (*cursor == '"' || *cursor == ',' || *cursor == '\n' || *cursor == '\r') {
+            needs_quotes = 1;
+            break;
+        }
+        ++cursor;
+    }
+
+    if (!needs_quotes) {
+        fputs(text, file);
+        return;
+    }
+
+    fputc('"', file);
+    while (*text != '\0') {
+        if (*text == '"') {
+            fputc('"', file);
+        }
+        fputc(*text, file);
+        ++text;
+    }
+    fputc('"', file);
+}
+
+static void to_logical_path(const char *absolute_path,
+                            const char *base_dir,
+                            const char *prefix,
+                            char *buffer,
+                            size_t buffer_size) {
+    size_t base_length = 0;
+
+    if (buffer == NULL || buffer_size == 0) {
+        return;
+    }
+
+    buffer[0] = '\0';
+    if (absolute_path == NULL || prefix == NULL) {
+        return;
+    }
+
+    if (base_dir != NULL) {
+        base_length = strlen(base_dir);
+        if (strncmp(absolute_path, base_dir, base_length) == 0 && absolute_path[base_length] == '/') {
+            snprintf(buffer, buffer_size, "%s/%s", prefix, absolute_path + base_length + 1);
+            return;
+        }
+    }
+
+    snprintf(buffer, buffer_size, "%s", absolute_path);
+}
+
+static void write_csv_header(FILE *file) {
+    if (file == NULL) {
+        return;
+    }
+
+    fprintf(file,
+            "timestamp,rank,size,host,arch,input_image,filter,output_file,status,pixels,width,height,"
+            "elapsed_seconds,error_message\n");
+}
+
+static void write_csv_record(FILE *file,
+                             int rank,
+                             int world_size,
+                             const char *host,
+                             const char *arch,
+                             const char *input_image,
+                             const char *filter_name,
+                             const char *output_file,
+                             const char *status,
+                             long long pixels,
+                             int width,
+                             int height,
+                             double elapsed_seconds,
+                             const char *error_message) {
+    char timestamp[32];
+
+    if (file == NULL) {
+        return;
+    }
+
+    format_timestamp(timestamp, sizeof(timestamp));
+    csv_write_field(file, timestamp);
+    fprintf(file, ",%d,%d,", rank, world_size);
+    csv_write_field(file, host);
+    fputc(',', file);
+    csv_write_field(file, arch);
+    fputc(',', file);
+    csv_write_field(file, input_image);
+    fputc(',', file);
+    csv_write_field(file, filter_name);
+    fputc(',', file);
+    csv_write_field(file, output_file);
+    fputc(',', file);
+    csv_write_field(file, status);
+    fprintf(file, ",%lld,%d,%d,%.4f,", pixels, width, height, elapsed_seconds);
+    csv_write_field(file, error_message);
+    fputc('\n', file);
+}
+
+static int append_csv_without_header(FILE *destination, const char *source_path) {
+    FILE *source = NULL;
+    char line[8192];
+    int first_line = 1;
+
+    if (destination == NULL || source_path == NULL) {
+        return -1;
+    }
+
+    source = fopen(source_path, "r");
+    if (source == NULL) {
+        return -1;
+    }
+
+    while (fgets(line, sizeof(line), source) != NULL) {
+        if (first_line) {
+            first_line = 0;
+            continue;
+        }
+        fputs(line, destination);
+    }
+
+    fclose(source);
+    return ferror(destination) ? -1 : 0;
+}
+
+static void log_bmp_probe(FILE *rank_log,
+                          int rank,
+                          const char *host,
+                          const char *arch,
+                          const char *input_image,
+                          const BMPInfo *info,
+                          const char *stage,
+                          const char *status_text,
+                          const char *error_text) {
+    int internal_row_stride = 0;
+
+    if (rank_log == NULL || input_image == NULL || stage == NULL || status_text == NULL) {
+        return;
+    }
+
+    if (info != NULL && info->width > 0) {
+        internal_row_stride = (info->width * 3 + 3) & ~3;
+    }
+
+    fprintf(rank_log,
+            "rank=%d host=%s arch=%s image=%s stage=%s status=%s width=%d height=%d bits_per_pixel=%d "
+            "compression=%u row_stride=%d channels=%d internal_row_stride=%d internal_channels=3 "
+            "orientation=%s conversion=normalized_to_rgb24 error=%s\n",
+            rank,
+            host != NULL ? host : "",
+            arch != NULL ? arch : "",
+            input_image,
+            stage,
+            status_text,
+            info != NULL ? info->width : 0,
+            info != NULL ? info->height : 0,
+            info != NULL ? info->bits_per_pixel : 0,
+            info != NULL ? info->compression : 0u,
+            info != NULL ? info->row_stride : 0,
+            info != NULL ? info->channels : 0,
+            internal_row_stride,
+            (info != NULL && info->top_down) ? "top-down" : "bottom-up",
+            error_text != NULL ? error_text : "");
+}
+
 static void compute_assignment(int rank, int world_size, int total_items, int *start, int *count) {
     int base = total_items / world_size;
     int rem = total_items % world_size;
@@ -330,13 +527,21 @@ int main(int argc, char **argv) {
     char hostname[256];
     char run_dir[PATH_MAX];
     char log_path[PATH_MAX];
+    char rank_csv_path[PATH_MAX];
+    char global_csv_path[PATH_MAX];
+    char summary_path[PATH_MAX];
     FILE *rank_log = NULL;
+    FILE *rank_csv = NULL;
     double rank_start = 0.0;
     double rank_elapsed = 0.0;
+    double total_elapsed = 0.0;
     int local_success = 0;
     int local_fail = 0;
     int total_success = 0;
     int total_fail = 0;
+    long long local_pixels_processed = 0;
+    long long total_pixels_processed = 0;
+    char *all_hosts = NULL;
     int i = 0;
 
     if (MPI_Init(&argc, &argv) != MPI_SUCCESS) {
@@ -423,34 +628,108 @@ int main(int argc, char **argv) {
     }
 
     snprintf(log_path, sizeof(log_path), "%s/rank_%d_%s.log", options.logs_dir, rank, hostname);
+    snprintf(rank_csv_path, sizeof(rank_csv_path), "%s/processing_rank_%d_%s.csv", options.logs_dir, rank, hostname);
+    snprintf(global_csv_path, sizeof(global_csv_path), "%s/processing_global.csv", options.logs_dir);
+    snprintf(summary_path, sizeof(summary_path), "%s/summary.txt", options.logs_dir);
     rank_log = fopen(log_path, "w");
     if (rank_log == NULL) {
         fprintf(stderr, "Rank %d: no se pudo abrir log '%s'.\n", rank, log_path);
         MPI_Abort(MPI_COMM_WORLD, 7);
     }
 
-    fprintf(rank_log, "rank=%d size=%d host=%s arch=%s assigned_images=%d\\n",
+    rank_csv = fopen(rank_csv_path, "w");
+    if (rank_csv == NULL) {
+        fprintf(stderr, "Rank %d: no se pudo abrir CSV temporal '%s'.\n", rank, rank_csv_path);
+        fclose(rank_log);
+        MPI_Abort(MPI_COMM_WORLD, 8);
+    }
+    write_csv_header(rank_csv);
+
+    fprintf(rank_log, "rank=%d size=%d host=%s arch=%s assigned_images=%d\n",
             rank,
             world_size,
             hostname,
             uts.machine,
             local_count);
     fflush(rank_log);
+    fflush(rank_csv);
 
     MPI_Barrier(MPI_COMM_WORLD);
     rank_start = now_seconds();
 
     for (i = local_start; i < local_start + local_count; ++i) {
         BMPImage image;
+        BMPInfo bmp_info;
+        BMPStatus bmp_status;
         Task tasks[TRANSFORM_COUNT];
+        char input_logical[PATH_MAX];
         int t = 0;
 
+        to_logical_path(images[i].path, options.input_dir, "input", input_logical, sizeof(input_logical));
+        fprintf(rank_log,
+                "rank=%d host=%s arch=%s assigned_image=%s\n",
+                rank,
+                hostname,
+                uts.machine,
+                input_logical);
+        log_bmp_probe(rank_log, rank, hostname, uts.machine, input_logical, NULL, "before_read", "BEGIN", "");
+
         memset(&image, 0, sizeof(image));
-        if (bmp_load(images[i].path, &image) != 0) {
-            fprintf(rank_log, "image=%s status=error reason=load_failed\\n", images[i].path);
-            ++local_fail;
+        memset(&bmp_info, 0, sizeof(bmp_info));
+        bmp_status = BMP_STATUS_OK;
+        if (bmp_load_detailed(images[i].path, &image, &bmp_info, &bmp_status) != 0) {
+            const char *bmp_error = bmp_status_message(bmp_status);
+
+            log_bmp_probe(rank_log,
+                          rank,
+                          hostname,
+                          uts.machine,
+                          input_logical,
+                          &bmp_info,
+                          "after_read",
+                          "FAIL",
+                          bmp_error);
+            for (t = 0; t < options.selected_transform_count; ++t) {
+                TransformType transform = (TransformType)options.selected_transforms[t];
+                char output_path[PATH_MAX];
+                char output_logical[PATH_MAX];
+
+                snprintf(output_path,
+                         sizeof(output_path),
+                         "%s/%s_%s.bmp",
+                         run_dir,
+                         images[i].base_name,
+                         transform_slug(transform));
+                to_logical_path(output_path, options.output_dir, "output", output_logical, sizeof(output_logical));
+
+                fprintf(rank_log,
+                        "rank=%d host=%s arch=%s image=%s filter=%s output=%s status=FAIL error=%s\n",
+                        rank,
+                        hostname,
+                        uts.machine,
+                        input_logical,
+                        transform_name(transform),
+                        output_logical,
+                        bmp_error);
+                write_csv_record(rank_csv,
+                                 rank,
+                                 world_size,
+                                 hostname,
+                                 uts.machine,
+                                 input_logical,
+                                 transform_name(transform),
+                                 output_logical,
+                                 "FAIL",
+                                 0,
+                                 bmp_info.width,
+                                 bmp_info.height,
+                                 0.0,
+                                 bmp_error);
+                ++local_fail;
+            }
             continue;
         }
+        log_bmp_probe(rank_log, rank, hostname, uts.machine, input_logical, &bmp_info, "after_read", "OK", "");
 
         for (t = 0; t < options.selected_transform_count; ++t) {
             TransformType transform = (TransformType)options.selected_transforms[t];
@@ -463,6 +742,7 @@ int main(int argc, char **argv) {
             task->input_image = &image;
             task->blur_kernel_size = 0;
             task->status = -1;
+            task->error_message[0] = '\0';
 
             if (transform == TRANSFORM_BLUR_GRAY) {
                 task->blur_kernel_size = options.blur_kernel_gray;
@@ -472,7 +752,50 @@ int main(int argc, char **argv) {
 
             if (strlen(run_dir) + strlen(images[i].base_name) + strlen(transform_slug(transform)) + 7 >
                 sizeof(task->output_path) - 1) {
-                fprintf(rank_log, "image=%s status=error reason=output_path_too_long\n", images[i].path);
+                int failed_index = 0;
+
+                for (failed_index = 0; failed_index <= t; ++failed_index) {
+                    char output_logical[PATH_MAX];
+                    Task *failed_task = &tasks[failed_index];
+
+                    if (failed_task->output_path[0] == '\0') {
+                        snprintf(failed_task->output_path,
+                                 sizeof(failed_task->output_path),
+                                 "%s/%s_%s.bmp",
+                                 run_dir,
+                                 images[i].base_name,
+                                 transform_slug(failed_task->transform));
+                    }
+
+                    to_logical_path(failed_task->output_path,
+                                    options.output_dir,
+                                    "output",
+                                    output_logical,
+                                    sizeof(output_logical));
+                    fprintf(rank_log,
+                            "rank=%d host=%s arch=%s image=%s filter=%s output=%s status=FAIL error=output_path_failed\n",
+                            rank,
+                            hostname,
+                            uts.machine,
+                            input_logical,
+                            transform_name(failed_task->transform),
+                            output_logical);
+                    write_csv_record(rank_csv,
+                                     rank,
+                                     world_size,
+                                     hostname,
+                                     uts.machine,
+                                     input_logical,
+                                     transform_name(failed_task->transform),
+                                     output_logical,
+                                     "FAIL",
+                                     0,
+                                     image.width,
+                                     image.height,
+                                     0.0,
+                                     "output_path_failed");
+                    ++local_fail;
+                }
                 bmp_free(&image);
                 goto next_image;
             }
@@ -488,13 +811,47 @@ int main(int argc, char **argv) {
         run_tasks(tasks, options.selected_transform_count, options.threads);
 
         for (t = 0; t < options.selected_transform_count; ++t) {
+            long long pixels = 0;
+            char output_logical[PATH_MAX];
+            const char *status_text = tasks[t].status == 0 ? "OK" : "FAIL";
+            const char *error_text = tasks[t].status == 0 ? "" :
+                                     (tasks[t].error_message[0] != '\0' ? tasks[t].error_message : "filter_failed");
+
+            to_logical_path(tasks[t].output_path, options.output_dir, "output", output_logical, sizeof(output_logical));
+            if (tasks[t].status == 0) {
+                pixels = (long long)image.width * (long long)image.height;
+                local_pixels_processed += pixels;
+            }
+
             fprintf(rank_log,
-                    "image=%s transform=%s status=%s out=%s time=%.6f\\n",
-                    images[i].path,
-                    transform_slug(tasks[t].transform),
-                    tasks[t].status == 0 ? "ok" : "error",
-                    tasks[t].output_path,
-                    tasks[t].elapsed_seconds);
+                    "rank=%d host=%s arch=%s image=%s filter=%s output=%s status=%s pixels=%lld "
+                    "width=%d height=%d elapsed=%.6f error=%s\n",
+                    rank,
+                    hostname,
+                    uts.machine,
+                    input_logical,
+                    transform_name(tasks[t].transform),
+                    output_logical,
+                    status_text,
+                    pixels,
+                    image.width,
+                    image.height,
+                    tasks[t].elapsed_seconds,
+                    error_text);
+            write_csv_record(rank_csv,
+                             rank,
+                             world_size,
+                             hostname,
+                             uts.machine,
+                             input_logical,
+                             transform_name(tasks[t].transform),
+                             output_logical,
+                             status_text,
+                             pixels,
+                             image.width,
+                             image.height,
+                             tasks[t].elapsed_seconds,
+                             error_text);
             if (tasks[t].status == 0) {
                 ++local_success;
             } else {
@@ -510,7 +867,7 @@ next_image:
     rank_elapsed = now_seconds() - rank_start;
 
     fprintf(rank_log,
-            "summary rank=%d size=%d host=%s arch=%s assigned_images=%d success=%d fail=%d elapsed=%.6f\\n",
+            "summary rank=%d size=%d host=%s arch=%s assigned_images=%d success=%d fail=%d elapsed=%.6f\n",
             rank,
             world_size,
             hostname,
@@ -519,9 +876,11 @@ next_image:
             local_success,
             local_fail,
             rank_elapsed);
+    fflush(rank_csv);
+    fclose(rank_csv);
     fclose(rank_log);
 
-    printf("rank=%d size=%d host=%s arch=%s assigned_images=%d elapsed=%.6f\\n",
+    printf("rank=%d size=%d host=%s arch=%s assigned_images=%d elapsed=%.6f\n",
            rank,
            world_size,
            hostname,
@@ -531,11 +890,111 @@ next_image:
 
     MPI_Reduce(&local_success, &total_success, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&local_fail, &total_fail, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&local_pixels_processed,
+               &total_pixels_processed,
+               1,
+               MPI_LONG_LONG,
+               MPI_SUM,
+               0,
+               MPI_COMM_WORLD);
+    MPI_Reduce(&rank_elapsed, &total_elapsed, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
     if (rank == 0) {
-        printf("total_images=%d total_ok=%d total_fail=%d\\n", image_count, total_success, total_fail);
+        all_hosts = (char *)calloc((size_t)world_size, sizeof(hostname));
+        if (all_hosts == NULL) {
+            fprintf(stderr, "Rank 0: no se pudo reservar memoria para hosts.\n");
+            MPI_Abort(MPI_COMM_WORLD, 9);
+        }
+    }
+    MPI_Gather(hostname, (int)sizeof(hostname), MPI_CHAR, all_hosts, (int)sizeof(hostname), MPI_CHAR, 0, MPI_COMM_WORLD);
+
+    if (rank == 0) {
+        FILE *global_csv = NULL;
+        FILE *summary_file = NULL;
+        char hosts_used[2048];
+        int node_count = 0;
+        double throughput = 0.0;
+
+        hosts_used[0] = '\0';
+
+        global_csv = fopen(global_csv_path, "w");
+        if (global_csv == NULL) {
+            fprintf(stderr, "Rank 0: no se pudo crear '%s'.\n", global_csv_path);
+            MPI_Abort(MPI_COMM_WORLD, 10);
+        }
+        write_csv_header(global_csv);
+
+        for (i = 0; i < world_size; ++i) {
+            char temp_csv_path[PATH_MAX];
+            char *host_ptr = all_hosts + ((size_t)i * sizeof(hostname));
+            int known_host = 0;
+            int j = 0;
+
+            snprintf(temp_csv_path,
+                     sizeof(temp_csv_path),
+                     "%s/processing_rank_%d_%s.csv",
+                     options.logs_dir,
+                     i,
+                     host_ptr);
+            if (append_csv_without_header(global_csv, temp_csv_path) != 0) {
+                fclose(global_csv);
+                fprintf(stderr, "Rank 0: no se pudo combinar '%s'.\n", temp_csv_path);
+                MPI_Abort(MPI_COMM_WORLD, 11);
+            }
+
+            for (j = 0; j < i; ++j) {
+                char *seen_host = all_hosts + ((size_t)j * sizeof(hostname));
+                if (strcmp(host_ptr, seen_host) == 0) {
+                    known_host = 1;
+                    break;
+                }
+            }
+
+            if (!known_host) {
+                size_t used_length = strlen(hosts_used);
+                size_t host_length = strlen(host_ptr);
+                if (used_length > 0 && used_length + 1 < sizeof(hosts_used)) {
+                    hosts_used[used_length++] = ',';
+                    hosts_used[used_length] = '\0';
+                }
+                if (used_length + host_length < sizeof(hosts_used)) {
+                    memcpy(hosts_used + used_length, host_ptr, host_length + 1);
+                }
+                ++node_count;
+            }
+        }
+        fclose(global_csv);
+
+        throughput = total_elapsed > 0.0 ? (double)total_pixels_processed / total_elapsed : 0.0;
+
+        summary_file = fopen(summary_path, "w");
+        if (summary_file == NULL) {
+            fprintf(stderr, "Rank 0: no se pudo crear '%s'.\n", summary_path);
+            MPI_Abort(MPI_COMM_WORLD, 12);
+        }
+        fprintf(summary_file, "total_images=%d\n", image_count);
+        fprintf(summary_file, "total_outputs_ok=%d\n", total_success);
+        fprintf(summary_file, "total_outputs_fail=%d\n", total_fail);
+        fprintf(summary_file, "total_pixels_processed=%lld\n", total_pixels_processed);
+        fprintf(summary_file, "total_elapsed_seconds=%.6f\n", total_elapsed);
+        fprintf(summary_file, "throughput_pixels_per_second=%.6e\n", throughput);
+        fprintf(summary_file, "nodes_used=%d\n", node_count);
+        fprintf(summary_file, "ranks_used=%d\n", world_size);
+        fprintf(summary_file, "hosts_used=%s\n", hosts_used);
+        fclose(summary_file);
+
+        printf("total_images=%d total_outputs_ok=%d total_outputs_fail=%d total_pixels_processed=%lld "
+               "total_elapsed_seconds=%.6f throughput_pixels_per_second=%.6e csv_global=%s\n",
+               image_count,
+               total_success,
+               total_fail,
+               total_pixels_processed,
+               total_elapsed,
+               throughput,
+               global_csv_path);
     }
 
+    free(all_hosts);
     free(paths_buf);
     free(bases_buf);
     free(images);

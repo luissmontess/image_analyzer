@@ -345,6 +345,10 @@ int apply_transform_parallel(const BMPImage *input,
         return -1;
     }
 
+    if (input->channels != 3 || output->channels != 3) {
+        return -1;
+    }
+
     copy_padding(input, output);
 
     if (thread_count <= 1) {

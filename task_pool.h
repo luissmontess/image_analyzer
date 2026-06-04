@@ -19,6 +19,7 @@ typedef struct {
     char output_path[PATH_MAX];
     double elapsed_seconds;
     int status;
+    char error_message[256];
 } Task;
 
 int run_tasks(Task *tasks, int task_count, int thread_count);
