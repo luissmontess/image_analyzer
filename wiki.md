@@ -2,12 +2,14 @@
 
 ## Objetivo de esta sección
 
-Documentar cómo la interfaz gráfica (Qt Designer + PyQt5) se conecta con los procesos del backend en C para:
+Documentar cómo la interfaz gráfica (Qt Designer + PyQt5) y el backend en C trabajan sobre las carpetas del proyecto para:
 
-- recibir hasta 10 imágenes BMP por arrastre o selección,
-- permitir seleccionar transformaciones,
-- ejecutar el procesamiento por lotes,
-- generar archivos de salida con acrónimos por transformación.
+- usar imágenes BMP ubicadas dentro del proyecto, especialmente en `input/`,
+- recibir hasta 10 imágenes BMP desde la GUI por arrastre,
+- validar que los BMP sean soportados antes de ejecutarlos,
+- permitir seleccionar transformaciones y kernels de desenfoque,
+- ejecutar el procesamiento por lotes mediante `QProcess`,
+- generar archivos de salida en `output/<threads>_threads/`.
 
 ## Arquitectura general
 
@@ -17,12 +19,20 @@ Documentar cómo la interfaz gráfica (Qt Designer + PyQt5) se conecta con los p
 
 Flujo global:
 
-1. Usuario agrega archivos (drag & drop o diálogo).
-2. La GUI valida formato BMP soportado.
-3. El usuario selecciona transformaciones y kernels.
-4. La GUI construye y lanza comando del backend con `QProcess`.
-5. El backend procesa y escribe resultados en `output/<threads>_threads/`.
-6. La GUI muestra logs, tiempo total y reporte.
+1. Las imágenes BMP de prueba se colocan en `input/`.
+2. En la GUI, el usuario puede arrastrar hasta 10 imágenes BMP desde esa carpeta.
+3. La GUI valida extensión y formato BMP soportado.
+4. El usuario selecciona transformaciones y kernels.
+5. La GUI copia los archivos válidos a una carpeta temporal de entrada.
+6. La GUI construye y lanza comando del backend con `QProcess`.
+7. El backend procesa y escribe resultados en `output/<threads>_threads/`.
+8. La GUI muestra logs, tiempo total y reporte.
+
+## Alcance del proyecto
+
+La interfaz gráfica está pensada para el flujo de demostración del entregable y limita la carga a un máximo de 10 imágenes BMP por corrida.
+
+El backend por terminal trabaja por carpeta: procesa los archivos `.bmp` encontrados en `--input-dir` y no impone el límite de 10 imágenes de la GUI. En ejecución MPI, el conjunto de imágenes se reparte entre los ranks disponibles, y cada rank registra en logs qué computadora procesó qué imágenes.
 
 ## Elementos gráficos y acciones que detonan
 
@@ -117,9 +127,9 @@ Se realiza en `MainWindow._wire_signals()`:
     - escribe reporte `output/gui_qt_designer_last_run.txt`,
     - muestra resultado en UI.
 
-## Formato de salida y nomenclatura requerida
+## Formato de salida y nomenclatura
 
-Cada imagen procesada conserva nombre original y agrega acrónimo:
+El backend genera cada salida usando el nombre base del archivo que recibe y agrega el acrónimo de la transformación:
 
 - `Fotoa.bmp -> Fotoa_vg.bmp` (vertical grises)
 - `Fotoa.bmp -> Fotoa_vc.bmp` (vertical color)
@@ -127,6 +137,15 @@ Cada imagen procesada conserva nombre original y agrega acrónimo:
 - `Fotoa.bmp -> Fotoa_hc.bmp` (horizontal color)
 - `Fotoa.bmp -> Fotoa_dg.bmp` (desenfoque grises)
 - `Fotoa.bmp -> Fotoa_dc.bmp` (desenfoque color)
+
+En ejecuciones directas por terminal, el backend usa los nombres tal como existen dentro de `--input-dir`.
+
+En ejecuciones desde la GUI, antes de llamar al backend se copian los archivos válidos a una carpeta temporal con prefijo de orden:
+
+- `Fotoa.bmp -> img_01_Fotoa.bmp`
+- salida generada: `img_01_Fotoa_vg.bmp`, `img_01_Fotoa_hc.bmp`, etc.
+
+Este prefijo ayuda a mantener un orden estable en el lote y evitar choques entre archivos con nombres repetidos.
 
 Las salidas se guardan en:
 
@@ -188,7 +207,9 @@ Notas:
 
 - `-n` = procesos MPI totales en el cluster.
 - `--threads` = hilos por proceso (paralelismo interno por nodo).
-- El resumen y CSV los escribe el rank 0 (proceso lider).
+- Cada rank escribe su propio log en `logs/rank_<rank>_<hostname>.log`.
+- Los logs permiten verificar qué computadora procesó cada parte del trabajo, ya que incluyen rank, hostname, arquitectura, imágenes asignadas, transformaciones ejecutadas, rutas de salida y tiempos.
+- El rank 0 imprime el resumen total en stdout al finalizar la corrida.
 
 
 ## Referencias de código clave
